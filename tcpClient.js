@@ -11,10 +11,6 @@ const
 		host: '129.10.113.143',
 		port: 80
 		});
-	// streamReader = function(stream) {
-	// 	events.EventEmitter.call(this);
-	// };
-	// util.inherits(streamReader, events.EventEmitter);
 
 client.on('data', function(data) {
 	'use strict';
@@ -31,7 +27,6 @@ client.on('data', function(data) {
 		*/
 		lines = message.split("\r\n"),
 
-
 		// this is the response code
 		response = lines[0];
 		// split again to get the status 
@@ -41,8 +36,6 @@ client.on('data', function(data) {
 		// status is one of : OK, 
 		status = codeStatus[2];
 		console.log(code +" <- code : status ->" + status);
-
-
 });
 
 //list for error
@@ -74,7 +67,7 @@ var home = "/";
  client.write('Host: fring.ccs.neu.edu\r\n');
  client.write('Accept: */*\r\n\r\n');
 
- // after a one second delay, send the other chunk
+// time out after a second
 let timer = setTimeout (function () {
 		client.end();
 	}, 1000);
