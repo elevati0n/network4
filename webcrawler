@@ -1,0 +1,176 @@
+#!/usr/bin/node
+var net = require('net');
+
+var Crawler = function() {
+  this.visited = [];
+  this.toVisit = [];
+  this.keys = [];
+  this.sessionToken;
+  this.csrfToken;
+
+  var args = process.argv.slice(2);
+
+  if (!args[0] || !args[1]) {
+    console.log('Please supply username and password as commandline arguments: ./webcrawler [username] [password]');
+    return;
+  }
+
+  this.username = args[0];
+  this.password = args[1];
+
+  this.getCSRF();
+}
+
+Crawler.prototype.getCSRF = function() {
+  var requestUrl = 'GET http://fring.ccs.neu.edu/accounts/login/ HTTP/1.1\r\n';
+  requestUrl += 'Connection:keep-alive\r\n';
+  requestUrl += 'Host:fring.ccs.neu.edu\r\n';
+  requestUrl += 'User-Agent: Mozilla 5.0\r\n\r\n';
+  request('129.10.113.143', requestUrl, function(data) {
+    key = data.split('\r\n\r\n')[1].match(/<input type='hidden' name='csrfmiddlewaretoken' value='(.+)'/);
+    if (key[1]) {
+      this.login(key[1]);
+    } else {
+      this.getCSRF();
+    }
+  }.bind(this));
+}
+
+Crawler.prototype.login = function(csrf) {
+  this.csrfToken = csrf;
+  var requestUrl = 'POST http://fring.ccs.neu.edu/accounts/login/ HTTP/1.1\r\n';
+  var requestData = 'username=' + this.username + '&password=' + this.password + '&csrfmiddlewaretoken=' + csrf + '&next=%2Ffakebook%2F';
+  requestUrl += 'User-Agent: Mozilla 5.0\r\n';
+  requestUrl += 'host: fring.ccs.neu.edu\r\n';
+  requestUrl += 'Content-Length: ' + requestData.length + '\r\n';
+  requestUrl += 'Cookie: csrftoken=' + csrf +  '\r\n';
+  requestUrl += 'Content-Type: application/x-www-form-urlencoded\r\n\r\n';
+  requestUrl += requestData;
+
+  request('129.10.113.143', requestUrl, function(data) {
+    this.homepage(data.match(/Set-Cookie: sessionid=(.+)\; expires/)[1], csrf);
+  }.bind(this));
+}
+
+Crawler.prototype.homepage = function(session, csrf) {
+  this.sessionToken = session;
+
+  var requestUrl = 'GET http://fring.ccs.neu.edu/fakebook/ HTTP/1.1\r\n';
+  requestUrl += 'Connection:keep-alive\r\n';
+  requestUrl += 'Host:fring.ccs.neu.edu\r\n';
+  requestUrl += 'User-Agent: Mozilla 5.0\r\n';
+  requestUrl += 'Cookie: csrftoken=' + csrf + '; sessionid=' + session + '\r\n\r\n';
+
+  request('129.10.113.143', requestUrl, function(data) {
+    this.extractUrls(data);
+    this.interval();
+  }.bind(this));
+}
+
+
+function request(ip, message, callback) {
+  var client = new net.Socket();
+  client.connect(80, ip, function() {
+    client.write(message);
+  });
+
+  var totalData = '';
+  var done = false;
+
+  client.on('data', function(data) {
+    if (done) return;
+    var contentLength = data.toString().match(/Content-Length: (\d+)/);
+    var status = data.toString().match(/^HTTP\/1\.1 (\d\d\d) .+/);
+    if (status && status[1] !== '301') {
+      callback(data.toString(), status[1]);
+      client.end();
+      return;
+    }
+
+    if (status && status[1] === '500') {
+      callback(data.toString(), status[1]);
+      client.end();
+      return;
+    }
+    if (data.toString().endsWith('</html>\n') || (contentLength && contentLength[1] === '0')) {
+        totalData += data.toString();
+        callback(totalData, '200');
+        done = true;
+        client.end();
+        }
+    else {
+        totalData += data.toString();
+    }
+  })
+}
+
+Crawler.prototype.extractUrls = function(html, source) {
+  var links = html.match(/<a href=\"([^\"]*?)\">/gi);
+  if (links) {
+    for (var i = 0; i < links.length; i++) {
+      var match = links[i].match(/<a href="\/fakebook\/(.+)\/">/);
+      if (match && match[1])  {
+        var link = match[1];
+        if (this.visited.indexOf(link) === -1) this.toVisit.push(link);
+      }
+    }
+  }
+
+  var keyMatch = html.match(/<h2 class='secret_flag' style="color:red">FLAG: ([^<]*)/);
+  if (keyMatch && keyMatch[1])  {
+    var key = keyMatch[1];
+    console.log(key);
+    this.keys.push(key);
+  }
+  if (this.keys.length === 5) return;
+  this.visitNext();
+}
+
+Crawler.prototype.visitNext = function() {
+  if (this.toVisit.length === 0) return;
+  var link = this.toVisit.shift();
+  if (this.visited.indexOf(link) > -1) {
+    this.visitNext();
+  } else {
+    this.visit(link);
+  }
+}
+
+Crawler.prototype.visit = function(link) {
+  var requestUrl = 'GET http://fring.ccs.neu.edu/fakebook/' + link + '/ HTTP/1.1\r\n'
+  requestUrl += 'Connection:keep-alive\r\n';
+  requestUrl += 'Host:fring.ccs.neu.edu\r\n';
+  requestUrl += 'User-Agent: Mozilla 5.0\r\n';
+  requestUrl += 'Cookie: csrftoken=' + this.csrfToken + '; sessionid=' + this.sessionToken + '\r\n\r\n';
+
+  request('129.10.113.143', requestUrl, function(data, status) {
+    if (status === '500') {
+      this.toVisit.push(link);
+      this.visitNext();
+      return;
+    }
+
+    if (status === '301') {
+      var location = data.match(/Location: http:\/\/fring\.ccs\.neu\.edu\/fakebook\/(.+)\n/);
+      if (location && location[1]) {
+        if (this.visited.indexOf(location[1]) === -1) this.toVisit.push(location[1]);
+      }
+    }
+
+    this.visited.push(link);
+    this.extractUrls(data, link);
+  }.bind(this));
+}
+
+// only available in ES6 so it's imported manually
+String.prototype.endsWith = function(searchString, position) {
+    var subjectString = this.toString();
+    if (typeof position !== 'number' || !isFinite(position) || Math.floor(position) !== position || position > subjectString.length) {
+      position = subjectString.length;
+    }
+    position -= searchString.length;
+    var lastIndex = subjectString.indexOf(searchString, position);
+    return lastIndex !== -1 && lastIndex === position;
+};
+
+new Crawler();
