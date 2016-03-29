@@ -29,5 +29,5 @@ We use 301s as redirects to update our 'to visit' queue.
 
 If it is a status code 500 we drop it from our to visit queue.
 
-
+Also included are some early prototypes of our crawler and a mini test server that broadcasts the input page.  
 
